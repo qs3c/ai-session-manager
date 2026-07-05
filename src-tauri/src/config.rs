@@ -15,7 +15,7 @@ impl AppConfig {
         let path = config_dir.join("config.json");
         if path.exists() {
             let text = fs::read_to_string(&path)?;
-            return Ok(serde_json::from_str(&text)?);
+            return Ok(serde_json::from_str(text.trim_start_matches('\u{feff}'))?);
         }
         let config = AppConfig {
             device_id: uuid::Uuid::new_v4().to_string(),
@@ -60,6 +60,25 @@ mod tests {
         assert_eq!(
             back.repo_url.as_deref(),
             Some("git@github.com:me/ai-sessions.git")
+        );
+    }
+
+    #[test]
+    fn load_config_with_utf8_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path()).unwrap();
+        fs::write(
+            dir.path().join("config.json"),
+            "\u{feff}{\"device_id\":\"dev-1\",\"repo_url\":\"https://example.test/repo.git\"}",
+        )
+        .unwrap();
+
+        let config = AppConfig::load_or_init(dir.path()).unwrap();
+
+        assert_eq!(config.device_id, "dev-1");
+        assert_eq!(
+            config.repo_url.as_deref(),
+            Some("https://example.test/repo.git")
         );
     }
 }
