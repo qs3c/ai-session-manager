@@ -67,8 +67,32 @@ impl GitRepo {
     }
 
     pub fn push(&self) -> Result<()> {
-        run_git_in(&self.dir, &["push", "-u", "origin", "main"])?;
-        Ok(())
+        let attempts: &[&[&str]] = &[
+            &["push", "-u", "origin", "main"],
+            &["-c", "http.version=HTTP/1.1", "push", "-u", "origin", "main"],
+            &[
+                "-c",
+                "http.postBuffer=157286400",
+                "push",
+                "-u",
+                "origin",
+                "main",
+            ],
+        ];
+
+        let mut last_error = None;
+        for args in attempts {
+            match run_git_in(&self.dir, args) {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if !is_transient_network_error(&e.to_string()) {
+                        return Err(e);
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+        Err(last_error.expect("push attempts should not be empty"))
     }
 
     pub fn pull_rebase(&self) -> Result<()> {
@@ -96,6 +120,12 @@ impl GitRepo {
             }
         }
     }
+}
+
+fn is_transient_network_error(message: &str) -> bool {
+    message.contains("Recv failure")
+        || message.contains("Connection was reset")
+        || message.contains("Software caused connection abort")
 }
 
 #[cfg(test)]
@@ -163,5 +193,18 @@ mod tests {
 
         let origin = run_git_in(&dir, &["remote", "get-url", "origin"]).unwrap();
         assert_eq!(origin.trim(), remote_b);
+    }
+
+    #[test]
+    fn identifies_transient_git_network_errors() {
+        assert!(is_transient_network_error(
+            "fatal: unable to access 'https://github.com/x/y.git/': Recv failure: Connection was reset"
+        ));
+        assert!(is_transient_network_error(
+            "kex_exchange_identification: read: Software caused connection abort"
+        ));
+        assert!(!is_transient_network_error(
+            "fatal: Could not read from remote repository."
+        ));
     }
 }
