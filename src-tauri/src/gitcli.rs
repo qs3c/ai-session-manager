@@ -31,9 +31,19 @@ pub struct GitRepo {
 impl GitRepo {
     pub fn ensure_clone(url: &str, dest: &Path) -> Result<GitRepo> {
         if dest.join(".git").exists() {
-            return Ok(GitRepo {
+            let repo = GitRepo {
                 dir: dest.to_path_buf(),
-            });
+            };
+            match run_git_in(&repo.dir, &["remote", "get-url", "origin"]) {
+                Ok(existing) if existing.trim() != url => {
+                    run_git_in(&repo.dir, &["remote", "set-url", "origin", url])?;
+                }
+                Err(_) => {
+                    run_git_in(&repo.dir, &["remote", "add", "origin", url])?;
+                }
+                _ => {}
+            }
+            return Ok(repo);
         }
         let parent = dest.parent().context("dest has no parent")?;
         std::fs::create_dir_all(parent)?;
@@ -126,5 +136,23 @@ mod tests {
         fs::write(dir.join("a.txt"), "x").unwrap();
         repo.commit_all("first").unwrap();
         repo.push().unwrap();
+    }
+
+    #[test]
+    fn ensure_clone_updates_existing_origin_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a_root = tmp.path().join("a");
+        let b_root = tmp.path().join("b");
+        fs::create_dir_all(&a_root).unwrap();
+        fs::create_dir_all(&b_root).unwrap();
+        let remote_a = make_bare_remote(&a_root);
+        let remote_b = make_bare_remote(&b_root);
+        let dir = tmp.path().join("mirror");
+
+        GitRepo::ensure_clone(&remote_a, &dir).unwrap();
+        GitRepo::ensure_clone(&remote_b, &dir).unwrap();
+
+        let origin = run_git_in(&dir, &["remote", "get-url", "origin"]).unwrap();
+        assert_eq!(origin.trim(), remote_b);
     }
 }
