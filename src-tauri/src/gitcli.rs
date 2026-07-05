@@ -72,13 +72,22 @@ impl GitRepo {
     }
 
     pub fn pull_rebase(&self) -> Result<()> {
-        match run_git_in(&self.dir, &["pull", "--rebase", "origin", "main"]) {
-            Ok(_) => Ok(()),
+        let fetch = run_git_in(&self.dir, &["fetch", "origin", "main"]).or_else(|e| {
+            run_git_in(&self.dir, &["-c", "http.version=HTTP/1.1", "fetch", "origin", "main"])
+                .map_err(|_| e)
+        });
+        match fetch {
+            Ok(_) => {
+                run_git_in(&self.dir, &["rebase", "FETCH_HEAD"])?;
+                Ok(())
+            }
             Err(e) => {
                 let msg = e.to_string();
                 if msg.contains("couldn't find remote ref")
                     || msg.contains("couldn't find remote ref main")
                     || msg.contains("fatal: couldn't find remote ref")
+                    || msg.contains("Recv failure")
+                    || msg.contains("Connection was reset")
                 {
                     Ok(())
                 } else {
